@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "name": "BMCShell 本地交互安装",
+  "framework": {
+    "archive": "../payload/BMCShell-3.0.0-dev.8-windows-amd64.zip",
+    "version": "3.0.0-dev.8",
+    "install_dir": "$HOME/.local/share/BMCShell",
+    "autoload": true
+  },
+  "globals": {
+    "env": {
+      "BMCSHELL_INSTALL_PROFILE": "local"
+    },
+    "settings": {
+      "BMCSHELL_TLS_MODE": "verify",
+      "BMCSHELL_SNMP_VERSION": "2c"
+    },
+    "scan": {
+      "enabled": true,
+      "commands": ["curl", "ssh", "ipmitool", "snmpget", "python3", "python"],
+      "directories": ["$HOME/bin", "$HOME/.local/bin"],
+      "required": []
+    }
+  },
+  "doctor": {
+    "auto_repair": false,
+    "required_commands": []
+  },
+  "packages": [],
+  "scripts": [
+    {
+      "name": "显示安装环境示例",
+      "file": "../examples/scripts/hello.sh",
+      "args": ["本地安装示例"],
+      "required": false,
+      "default": true
+    }
+  ]
+}
