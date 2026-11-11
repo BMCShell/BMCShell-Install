@@ -12,6 +12,9 @@ import (
 //go:embed installer.sh.tmpl
 var installerTemplate string
 
+//go:embed release-index.ps1
+var releaseIndexParser string
+
 // ShellQuote preserves configuration values as data, including $, backticks and quotes.
 func ShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
@@ -41,6 +44,7 @@ func Render(cfg Config) ([]byte, error) {
 		payload.WriteString(" )\n")
 	}
 	assign("TITLE", cfg.Name)
+	assign("CORE_RELEASE_INDEX", cfg.Framework.ReleaseIndex)
 	assign("CORE_ARCHIVE", cfg.Framework.Archive)
 	assign("CORE_SHA256", strings.ToLower(cfg.Framework.SHA256))
 	assign("CORE_VERSION", cfg.Framework.Version)
@@ -64,6 +68,14 @@ func Render(cfg Config) ([]byte, error) {
 	for _, key := range sortedKeys(cfg.Globals.Settings) {
 		fmt.Fprintf(&payload, "    apply_setting %s %s\n", ShellQuote(key), ShellQuote(cfg.Globals.Settings[key]))
 	}
+	for _, name := range sortedKeys(cfg.Globals.PluginSources) {
+		source := cfg.Globals.PluginSources[name]
+		fmt.Fprintf(&payload, "    apply_plugin_source %s %s", ShellQuote(name), ShellQuote(source.URL))
+		if source.Insecure {
+			payload.WriteString(" --insecure")
+		}
+		payload.WriteByte('\n')
+	}
 	payload.WriteString("}\n\nconfig_packages() {\n    :\n")
 	for _, p := range cfg.Packages {
 		fmt.Fprintf(&payload, "    install_package %s %s %s %s %d %d\n", ShellQuote(p.Name), ShellQuote(p.File), ShellQuote(strings.ToLower(p.SHA256)), ShellQuote(p.Selector), bit(p.Required), bit(Enabled(p.Default)))
@@ -82,13 +94,16 @@ func Render(cfg Config) ([]byte, error) {
 		return nil, err
 	}
 	var output bytes.Buffer
-	if err := tmpl.Execute(&output, struct{ Payload string }{payload.String()}); err != nil {
+	if err := tmpl.Execute(&output, struct{ Payload, ReleaseIndexParser string }{
+		Payload:            payload.String(),
+		ReleaseIndexParser: ShellQuote(strings.TrimSpace(releaseIndexParser)),
+	}); err != nil {
 		return nil, err
 	}
 	return output.Bytes(), nil
 }
 
-func sortedKeys(m map[string]string) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for key := range m {
 		keys = append(keys, key)

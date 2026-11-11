@@ -13,13 +13,16 @@ if (( BASH_VERSINFO[0] < 4 )); then
 fi
 case ${1-} in
     -h|--help)
-        printf '用法：bash %q 或 curl -fsSL <安装脚本的 HTTPS 地址> | bash\n交互式安装 BMCShell、全局参数、依赖和配置中的扩展及脚本。\n' "${BASH_SOURCE[0]:-install-bmcshell.sh}"
+        printf '说明\n  交互式安装 BMCShell，并应用配置中的全局参数、扩展和附加脚本。\n\n'
+        printf '用法\n  bash %q [-h|--help]\n  curl -fsSL <安装脚本的 HTTPS 地址> | bash\n\n' "${BASH_SOURCE[0]:-install-bmcshell.sh}"
+        printf '参数\n  -h, --help  显示帮助并退出。\n\n示例\n  bash ./install-bmcshell.sh\n\n'
+        printf '使用说明\n  安装需要交互式 Bash 4 或更新版本。本地资源路径相对于安装脚本所在目录。\n'
         exit 0 ;;
     '') ;;
-    *) printf '不支持的参数：%s\n' "$1" >&2; exit 2 ;;
+    *) printf '不支持的参数 %q。请使用 --help 查看用法。\n' "$1" >&2; exit 2 ;;
 esac
 if (( $# > 1 )); then
-    printf '安装器不接受额外参数。\n' >&2
+    printf '安装器不接受额外参数。请使用 --help 查看用法。\n' >&2
     exit 2
 fi
 if [[ ! -t 0 ]]; then
@@ -118,6 +121,27 @@ verify_sha() {
         return 1
     fi
 }
+download_https() {
+    local source=$1 path=$2 status system_dir windows_curl
+    shift 2
+    local -a options=(--fail --location --proto '=https' --proto-redir '=https' "$@")
+    if curl "${options[@]}" --output "$path" "$source"; then
+        return 0
+    else
+        status=$?
+    fi
+    [[ $status == 77 ]] && command -v cygpath >/dev/null 2>&1 || return "$status"
+    system_dir=$(cygpath -u -S) || return "$status"
+    windows_curl=$system_dir/curl.exe
+    [[ -x $windows_curl ]] || return "$status"
+
+    printf '当前 curl 无法读取 CA 证书文件，改用 Windows curl 和系统证书库。\n' >&2
+    (
+        unset CURL_CA_BUNDLE SSL_CERT_FILE SSL_CERT_DIR
+        # Redirect in Bash so the native executable does not need a POSIX path.
+        "$windows_curl" --disable "${options[@]}" "$source" > "$path"
+    )
+}
 FETCH_COUNT=0
 fetch_file() {
     local source=$1 digest=$2 allow_directory=${3:-0} path
@@ -128,7 +152,7 @@ fetch_file() {
         # downloaded script text from this temporary filename.
         path=$WORK_DIR/download-$FETCH_COUNT.zip
         printf '下载：%s\n' "$source"
-        curl --fail --location --proto '=https' --proto-redir '=https' --output "$path" "$source" || return
+        download_https "$source" "$path" || return
     else
         path=$(expand_path "$source") || return
         if [[ $allow_directory == 1 && -d $path && -z $digest ]]; then
@@ -140,8 +164,54 @@ fetch_file() {
     verify_sha "$path" "$digest" || return
     FETCHED_FILE=$path
 }
+resolve_core_release() {
+    local index_file=$WORK_DIR/release-index.json system_dir powershell native_index selection
+    local -a fields
+    system_dir=$(cygpath -u -S) || return 1
+    powershell=$system_dir/WindowsPowerShell/v1.0/powershell.exe
+    [[ -x $powershell ]] || { printf '读取框架版本索引需要 Windows PowerShell。\n' >&2; return 1; }
+    native_index=$(cygpath -aw -- "$index_file") || return 1
+
+    printf '读取框架版本索引：%s\n' "$CORE_RELEASE_INDEX"
+    download_https "$CORE_RELEASE_INDEX" "$index_file" --max-filesize 1048576 || return
+    selection=$(BMCI_INDEX_PATH="$native_index" BMCI_INDEX_VERSION="$CORE_VERSION" MSYS2_ARG_CONV_EXCL='*' \
+        "$powershell" -NoProfile -NonInteractive -Command {{.ReleaseIndexParser}}) || return
+    mapfile -t fields <<< "${selection//$'\r'/}"
+    if [[ ${#fields[@]} != 3 || -z ${fields[0]} || -z ${fields[1]} || -z ${fields[2]} ]]; then
+        printf '框架版本索引没有返回完整的发布信息。\n' >&2
+        return 1
+    fi
+    CORE_VERSION=${fields[0]}
+    CORE_ARCHIVE=${fields[1]}
+    CORE_SHA256=${fields[2]}
+    printf '选定框架版本：%s\n' "$CORE_VERSION"
+}
+ensure_core_executable() {
+    local bin=$1/bin release=$1/bin/releases/$CORE_VERSION executable active trailing
+    executable=$release/BMCShell.exe
+    if [[ -L $bin || -L $bin/active || ! -f $bin/active ]] ||
+        ! { IFS= read -r -n 130 active && ! IFS= read -r -n 1 trailing; } < "$bin/active"; then
+        printf '框架活动版本文件缺失或无效。\n' >&2
+        return 1
+    fi
+    if [[ $active != "$CORE_VERSION" ]]; then
+        printf '框架活动版本与所选版本 %s 不一致。\n' "$CORE_VERSION" >&2
+        return 1
+    fi
+    if [[ -L $bin/releases || -L $release || -L $executable || ! -f $executable || ! -s $executable ]]; then
+        printf '框架程序文件缺失或无效：%s\n' "$executable" >&2
+        return 1
+    fi
+    if [[ ! -x $executable ]]; then
+        if ! chmod u+x -- "$executable" || [[ ! -x $executable ]]; then
+            printf '无法为框架程序设置执行权限：%s\n' "$executable" >&2
+            return 1
+        fi
+        printf '已补齐 BMCShell.exe 的执行权限。\n'
+    fi
+}
 prepare_core() {
-    local entry listing permissions staged version
+    local entry listing permissions staged
     command -v unzip >/dev/null 2>&1 || { printf '解压框架需要 unzip。\n' >&2; return 1; }
     fetch_file "$CORE_ARCHIVE" "$CORE_SHA256" || return
     listing=$(unzip -Z1 "$FETCHED_FILE") || return
@@ -161,15 +231,10 @@ prepare_core() {
     done <<< "$permissions"
     staged=$(mktemp -d "$WORK_DIR/core.XXXXXXXX") || return
     unzip -q -o "$FETCHED_FILE" -d "$staged" || return
-    [[ -s $staged/BMCShell/bin/bmcshell.sh && -f $staged/BMCShell/bin/active ]] || {
+    [[ -s $staged/BMCShell/bin/bmcshell.sh && -s $staged/BMCShell/bin/releases/$CORE_VERSION/shell/bmcshell.sh ]] || {
         printf '框架 ZIP 缺少便携安装入口。\n' >&2; return 1;
     }
-    IFS= read -r version < "$staged/BMCShell/bin/active" || return
-    version=${version%$'\r'}
-    [[ $version == "$CORE_VERSION" && -s $staged/BMCShell/bin/releases/$version/BMCShell.exe &&
-       -s $staged/BMCShell/bin/releases/$version/shell/bmcshell.sh ]] || {
-        printf '框架 ZIP 的版本或发布目录与配置不一致。\n' >&2; return 1;
-    }
+    ensure_core_executable "$staged/BMCShell" || return
     STAGED_CORE=$staged/BMCShell
 }
 retry_or_abort() {
@@ -190,6 +255,9 @@ retry_or_abort() {
 install_core() {
     local contents parent version
     notice '[1/5] 安装 BMCShell 框架'
+    if [[ -n $CORE_RELEASE_INDEX ]]; then
+        while ! resolve_core_release; do retry_or_abort '读取框架版本索引' 1; done
+    fi
     choose_path '框架安装目录' "$INSTALL_DIR_DEFAULT"
     INSTALL_DIR=$CHOSEN_PATH
     if [[ -e $INSTALL_DIR && ! -d $INSTALL_DIR ]]; then die '安装位置不是目录。'; fi
@@ -198,6 +266,7 @@ install_core() {
         [[ -s $INSTALL_DIR/bin/bmcshell.sh ]] || die '目标目录非空且不是 BMCShell 便携安装，请选择空目录。'
         confirm '此目录已有 BMCShell，使用已有框架继续？' 0 || die '未选择已有框架。'
         INSTALL_DIR=$(cd -P -- "$INSTALL_DIR" && pwd -P) || die '无法访问安装目录。'
+        ensure_core_executable "$INSTALL_DIR" || die '已有框架未通过启动检查。'
     else
         confirm "确认安装框架 $CORE_VERSION 到 $INSTALL_DIR？" 1 || die '已取消框架安装。'
         while ! prepare_core; do retry_or_abort '准备框架发布包' 1; done
@@ -317,6 +386,14 @@ apply_setting() {
         ask "请输入 $key 的新值 [$value]："
         [[ -z $REPLY ]] || value=$REPLY
     done
+}
+apply_plugin_source() {
+    local name=$1 url=$2
+    shift 2
+    while ! bmc setting --set "plugin.source.$name" "$url" "$@" >/dev/null; do
+        retry_or_abort "设置插件源 $name" 1
+    done
+    printf '已设置插件源：%s\n' "$name"
 }
 write_loaders() {
     local env_temp load_temp directory index

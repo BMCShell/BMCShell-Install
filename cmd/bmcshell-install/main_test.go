@@ -12,8 +12,8 @@ func TestCLIConfigurationToInstaller(t *testing.T) {
 	dir := t.TempDir()
 	config := filepath.Join(dir, "install.json")
 	output := filepath.Join(dir, "generated", "install.sh")
-	var stdout, stderr bytes.Buffer
-	call := func(args ...string) error { stdout.Reset(); stderr.Reset(); return run(args, &stdout, &stderr) }
+	var stdout bytes.Buffer
+	call := func(args ...string) error { stdout.Reset(); return run(args, &stdout) }
 	if err := call("init", "--output", config); err != nil {
 		t.Fatal(err)
 	}
@@ -61,8 +61,8 @@ func TestCLIFailurePreservesExistingOutput(t *testing.T) {
 	if err := os.WriteFile(output, []byte("preserve me"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	var stdout, stderr bytes.Buffer
-	if err := run([]string{"generate", "--config", config, "--output", output, "--force"}, &stdout, &stderr); err == nil {
+	var stdout bytes.Buffer
+	if err := run([]string{"generate", "--config", config, "--output", output, "--force"}, &stdout); err == nil {
 		t.Fatal("accepted invalid configuration")
 	}
 	after, err := os.ReadFile(output)
@@ -72,20 +72,35 @@ func TestCLIFailurePreservesExistingOutput(t *testing.T) {
 }
 
 func TestCLIErrorsAndHelp(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	for _, args := range [][]string{{"unknown"}, {"validate"}, {"generate"}, {"init", "unexpected"}, {"version", "unexpected"}} {
-		if err := run(args, &stdout, &stderr); err == nil {
-			t.Fatalf("accepted arguments: %v", args)
+	var stdout bytes.Buffer
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"unknown"}, "未知命令"},
+		{[]string{"validate"}, "缺少必填选项 --config"},
+		{[]string{"generate"}, "缺少必填选项 --config"},
+		{[]string{"init", "unexpected"}, "不接受位置参数"},
+		{[]string{"version", "unexpected"}, "不接受额外参数"},
+		{[]string{"validate", "--config"}, "选项 --config 缺少参数值"},
+		{[]string{"init", "--other"}, "不支持选项 --other"},
+		{[]string{"init", "--force=maybe"}, "--force 的值无效"},
+	} {
+		if err := run(tc.args, &stdout); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("arguments %v: expected error containing %q, got %v", tc.args, tc.want, err)
 		}
 	}
-	for _, args := range [][]string{nil, {"--help"}, {"version"}, {"generate", "--help"}} {
+	for _, args := range [][]string{nil, {"--help"}, {"init", "-h"}, {"validate", "--help"}, {"generate", "--help"}, {"version", "--help"}} {
 		stdout.Reset()
-		stderr.Reset()
-		if err := run(args, &stdout, &stderr); err != nil {
-			t.Fatalf("help/version failed: %v: %v", args, err)
+		if err := run(args, &stdout); err != nil {
+			t.Fatalf("help failed: %v: %v", args, err)
 		}
-		if stdout.Len()+stderr.Len() == 0 {
-			t.Fatalf("help/version produced no output: %v", args)
+		if !strings.Contains(stdout.String(), "用法\n") || strings.Contains(stdout.String(), "Usage") {
+			t.Fatalf("expected Chinese help for %v, got %q", args, stdout.String())
 		}
+	}
+	stdout.Reset()
+	if err := run([]string{"version"}, &stdout); err != nil || stdout.String() != "BMCShell-Install "+version+"\n" {
+		t.Fatalf("unexpected version output %q: %v", stdout.String(), err)
 	}
 }

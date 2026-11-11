@@ -58,8 +58,12 @@
     "framework": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["archive", "version"],
       "properties": {
+        "release_index": {
+          "type": "string",
+          "pattern": "^https://[^/?#@\\s]+(?:[/?][^#\\s]*)?$",
+          "description": "框架发行版索引的 HTTPS URL。与 archive 和 sha256 互斥。"
+        },
         "archive": {"$ref": "#/$defs/source"},
         "sha256": {"$ref": "#/$defs/sha256"},
         "version": {
@@ -67,12 +71,22 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
-          "description": "ZIP 中的框架版本，例如 3.0.0-dev.8。"
+          "description": "直接安装时必须匹配 ZIP 的框架版本。索引安装时可选，省略时选择索引的 latest。"
         },
         "install_dir": {"$ref": "#/$defs/path", "default": "$HOME/.local/share/BMCShell"},
         "home": {"$ref": "#/$defs/path", "description": "数据根目录，省略时使用 install_dir。"},
         "autoload": {"type": "boolean", "default": true}
       },
+      "oneOf": [
+        {
+          "required": ["release_index"],
+          "not": {"anyOf": [{"required": ["archive"]}, {"required": ["sha256"]}]}
+        },
+        {
+          "required": ["archive", "version"],
+          "not": {"required": ["release_index"]}
+        }
+      ],
       "allOf": [{"$ref": "#/$defs/remoteArchiveDigest"}]
     },
     "remoteArchiveDigest": {
@@ -102,7 +116,7 @@
               "anyOf": [
                 {"pattern": "^(BASH|BMCSHELL_BRIDGE_)"},
                 {"enum": ["PATH", "HOME", "BMCSHELL_HOME", "BMCSHELL_EXE", "BMCSHELL_CONTEXT", "ENV", "IFS", "SHELLOPTS", "CDPATH", "GLOBIGNORE", "PS4", "SHELL", "UID", "EUID", "PPID", "PWD", "OLDPWD", "SHLVL", "FUNCNAME", "DIRSTACK", "GROUPS", "PIPESTATUS", "RANDOM", "SECONDS", "LINENO", "OPTIND", "OPTARG"]},
-                {"enum": ["TITLE", "CORE_ARCHIVE", "CORE_SHA256", "CORE_VERSION", "INSTALL_DIR_DEFAULT", "DATA_HOME_DEFAULT", "AUTOLOAD", "DOCTOR_AUTO_REPAIR", "SCAN_ENABLED", "SCAN_COMMANDS", "SCAN_DIRECTORIES", "SCAN_BASE_PATH", "REQUIRED_COMMANDS", "WARNINGS", "SCRIPT_DIR", "WORK_DIR", "REPLY", "FETCH_COUNT", "FETCHED_FILE", "STAGED_CORE", "CHOSEN_PATH", "INSTALL_DIR", "DATA_HOME", "STATE_DIR", "LOAD_FILE", "FOUND_DIRS", "ENV_KEYS", "ENV_VALUES", "CATALOG_READY"]}
+                {"enum": ["TITLE", "CORE_ARCHIVE", "CORE_RELEASE_INDEX", "CORE_SHA256", "CORE_VERSION", "INSTALL_DIR_DEFAULT", "DATA_HOME_DEFAULT", "AUTOLOAD", "DOCTOR_AUTO_REPAIR", "SCAN_ENABLED", "SCAN_COMMANDS", "SCAN_DIRECTORIES", "SCAN_BASE_PATH", "REQUIRED_COMMANDS", "WARNINGS", "SCRIPT_DIR", "WORK_DIR", "REPLY", "FETCH_COUNT", "FETCHED_FILE", "STAGED_CORE", "CHOSEN_PATH", "INSTALL_DIR", "DATA_HOME", "STATE_DIR", "LOAD_FILE", "FOUND_DIRS", "ENV_KEYS", "ENV_VALUES", "CATALOG_READY"]}
               ]
             }
           },
@@ -115,8 +129,39 @@
           "description": "通过 bmc setting --set 保存；环境设置键为变量名，不是逻辑字段名。",
           "default": {}
         },
+        "plugin_sources": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[a-z][a-z0-9-]{0,47}$"},
+          "additionalProperties": {"$ref": "#/$defs/pluginSource"},
+          "description": "安装时自动保存的插件源。同一个源不能同时出现在 settings 的 plugin.source.<名称> 中，生成器会检查此约束。",
+          "default": {}
+        },
         "scan": {"$ref": "#/$defs/scan"}
       }
+    },
+    "pluginSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^https?://[^/?#@\\s]+(?:[/?][^#\\s]*)?$",
+          "description": "插件源索引地址。接受 HTTPS 和回环地址的 HTTP，由生成器校验。"
+        },
+        "insecure": {
+          "type": "boolean",
+          "default": false,
+          "description": "对此源的私网 HTTPS IP 和端口跳过证书校验。需要支持逐源 --insecure 的 BMCShell，例如 3.0.0-dev.9。"
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"insecure": {"const": true}}, "required": ["insecure"]},
+          "then": {"properties": {"url": {"pattern": "^https://"}}}
+        }
+      ]
     },
     "scan": {
       "type": "object",

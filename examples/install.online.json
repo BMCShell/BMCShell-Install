@@ -1,10 +1,8 @@
 {
   "schema": 1,
-  "name": "BMCShell 在线交互安装（请替换占位发布地址及校验值）",
+  "name": "BMCShell 在线交互安装（官方源）",
   "framework": {
-    "archive": "https://example.invalid/releases/BMCShell-3.0.0-dev.8-windows-amd64.zip",
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "version": "3.0.0-dev.8",
+    "release_index": "https://github.com/BMCShell/BMCShell/releases/download/release-index/index.json",
     "install_dir": "$HOME/.local/share/BMCShell",
     "home": "$HOME/.local/share/BMCShell-data",
     "autoload": true
@@ -14,8 +12,12 @@
       "BMCSHELL_INSTALL_PROFILE": "online"
     },
     "settings": {
-      "BMCSHELL_TLS_MODE": "verify",
-      "plugin.source.company": "https://example.invalid/bmcshell/index.json"
+      "BMCSHELL_TLS_MODE": "verify"
+    },
+    "plugin_sources": {
+      "official": {
+        "url": "https://raw.githubusercontent.com/BMCShell/packages/main/index.json"
+      }
     },
     "scan": {
       "enabled": true,
@@ -31,24 +33,7 @@
   "packages": [
     {
       "name": "IPMI 工具（软件源）",
-      "selector": "bmcshell-tool-ipmi@1.0.1",
-      "required": false,
-      "default": true
-    },
-    {
-      "name": "Redfish 工具（HTTPS 包占位）",
-      "file": "https://example.invalid/packages/bmcshell-tool-redfish-1.0.1.zip",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "required": false,
-      "default": false
-    }
-  ],
-  "scripts": [
-    {
-      "name": "项目初始化（HTTPS 脚本占位）",
-      "file": "https://example.invalid/scripts/project-init.sh",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "args": ["--profile", "demo"],
+      "selector": "bmcshell-tool-ipmi@1.0.2",
       "required": false,
       "default": false
     }
